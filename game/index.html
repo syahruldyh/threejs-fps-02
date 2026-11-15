@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SLAGWORKS — Furnace Row tactical FPS</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#2e2140;font-family:'Segoe UI',system-ui,sans-serif;color:#f2ede4}
+  #game{position:fixed;inset:0}
+  #game canvas{display:block}
+  .hud{position:fixed;z-index:5;pointer-events:none;user-select:none}
+  /* crosshair */
+  #crosshair{left:50%;top:50%;width:0;height:0}
+  #crosshair div{position:absolute;background:#e8f2e4;box-shadow:0 0 2px #000}
+  #ch-t,#ch-b{width:2px;height:9px;left:-1px}
+  #ch-l,#ch-r{height:2px;width:9px;top:-1px}
+  #ch-dot{width:3px;height:3px;left:-1.5px;top:-1.5px;border-radius:50%}
+  #hitmarker{left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;opacity:0;transition:opacity .12s}
+  #hitmarker::before,#hitmarker::after{content:'';position:absolute;inset:0;background:
+    linear-gradient(45deg,transparent 46%,#fff 46%,#fff 54%,transparent 54%),
+    linear-gradient(-45deg,transparent 46%,#fff 46%,#fff 54%,transparent 54%)}
+  #hitmarker.kill::before,#hitmarker.kill::after{background:
+    linear-gradient(45deg,transparent 46%,#ff4d3d 46%,#ff4d3d 54%,transparent 54%),
+    linear-gradient(-45deg,transparent 46%,#ff4d3d 46%,#ff4d3d 54%,transparent 54%)}
+  #dmg{inset:0;background:radial-gradient(ellipse at center,transparent 55%,rgba(200,30,20,.55) 100%);opacity:0;transition:opacity .2s;z-index:4}
+  /* bottom-left vitals */
+  #vitals{left:18px;bottom:16px;display:flex;gap:10px;align-items:flex-end}
+  .stat{background:rgba(12,10,18,.72);border:1px solid rgba(255,255,255,.14);padding:8px 12px;min-width:92px;border-radius:3px}
+  .stat .lbl{font-size:10px;letter-spacing:2px;color:#b9b2a6}
+  .stat .num{font-size:26px;font-weight:700;line-height:1}
+  .bar{height:5px;background:#33302c;margin-top:6px;border-radius:2px;overflow:hidden}
+  .bar i{display:block;height:100%;background:#7ec850}
+  #armour-bar{background:#59b7ff}
+  /* bottom-right weapon */
+  #weapon{right:18px;bottom:16px;text-align:right;background:rgba(12,10,18,.72);border:1px solid rgba(255,255,255,.14);padding:8px 14px;border-radius:3px}
+  #weapon-name{font-size:12px;letter-spacing:2px;color:#ffb36b}
+  #ammo-mag{font-size:34px;font-weight:700}
+  #ammo-res{font-size:16px;color:#b9b2a6}
+  /* top center score */
+  #scoreboard{top:12px;left:50%;transform:translateX(-50%);display:flex;gap:0;align-items:center;text-align:center}
+  #scoreboard .team{padding:6px 16px;font-weight:800;font-size:18px}
+  #score-e{background:rgba(255,138,60,.85);color:#1a1208}
+  #score-a{background:rgba(89,183,255,.85);color:#08131a}
+  #score-mid{background:rgba(12,10,18,.78);padding:6px 14px}
+  #timer{font-size:22px;font-weight:800}
+  #timer.low{color:#ff5a3d}
+  #round-label{font-size:10px;letter-spacing:2px;color:#b9b2a6}
+  /* minimap */
+  #minimap{top:12px;left:12px;border:1px solid rgba(255,255,255,.2);background:rgba(10,10,16,.7)}
+  /* killfeed + radio */
+  #killfeed{top:12px;right:12px;text-align:right;font-size:13px}
+  #killfeed .kf{background:rgba(12,10,18,.72);padding:4px 10px;margin-bottom:4px;border-radius:2px}
+  #killfeed .kf span{color:#b9b2a6}
+  #radio{left:18px;bottom:110px;font-size:13px}
+  #radio .radio{background:rgba(12,10,18,.66);padding:3px 9px;margin-top:3px;border-left:3px solid #e8b400;border-radius:2px}
+  /* banner */
+  #banner{top:30%;left:50%;transform:translate(-50%,-50%);text-align:center;opacity:0;transition:opacity .3s}
+  #banner.show{opacity:1}
+  #banner-title{font-size:44px;font-weight:900;letter-spacing:4px;text-shadow:0 2px 12px #000}
+  #banner-sub{font-size:15px;color:#ffd9a0;text-shadow:0 1px 6px #000}
+  /* buy menu */
+  #buymenu{top:50%;left:50%;transform:translate(-50%,-50%);width:420px;background:rgba(14,12,20,.94);border:1px solid #e8b400;padding:18px 20px;pointer-events:auto;display:none;z-index:8}
+  #buymenu h2{margin:0 0 4px;font-size:20px;letter-spacing:3px}
+  #buymenu .sub{color:#b9b2a6;font-size:12px;margin-bottom:12px}
+  .buy-item{display:flex;gap:10px;padding:9px 10px;border:1px solid rgba(255,255,255,.12);margin-bottom:6px;cursor:pointer}
+  .buy-item:hover{border-color:#e8b400}
+  .buy-item.owned{opacity:.55}
+  .buy-item.poor{opacity:.45}
+  .buy-item .k{background:#e8b400;color:#111;font-weight:800;padding:1px 8px;border-radius:2px}
+  .buy-item .n{flex:1}
+  .buy-item .p{font-weight:700}
+  /* progress + spectate + hint */
+  #progress{bottom:150px;left:50%;transform:translateX(-50%);width:280px;display:none;text-align:center}
+  #progress-label{font-size:13px;letter-spacing:2px;margin-bottom:5px;text-shadow:0 1px 4px #000}
+  #progress .track{height:8px;background:rgba(0,0,0,.6);border:1px solid #e8b400}
+  #progress-bar{height:100%;width:0%;background:#e8b400}
+  #spectate{bottom:190px;left:50%;transform:translateX(-50%);font-size:13px;background:rgba(12,10,18,.7);padding:5px 12px;display:none}
+  #hint{bottom:64px;left:50%;transform:translateX(-50%);font-size:13px;color:#ffd9a0;text-shadow:0 1px 4px #000}
+  /* overlays */
+  .overlay{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(20,14,28,.82);text-align:center}
+  .overlay h1{font-size:52px;margin:0;letter-spacing:6px}
+  .overlay h1 em{color:#ff8a3c;font-style:normal}
+  .overlay p{color:#cfc8bc;max-width:520px;line-height:1.5}
+  .overlay button{pointer-events:auto;cursor:pointer;background:#e8b400;border:0;color:#111;font-size:18px;font-weight:800;padding:12px 34px;letter-spacing:2px;border-radius:3px}
+  .overlay button:hover{background:#ffc81e}
+  #matchend{display:none}
+  #me-title{font-size:46px}
+  .keys{font-size:12px;color:#9a938a;margin-top:14px;line-height:1.8}
+  .keys b{color:#e8f2e4}
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.min.js" } }
+</script>
+</head>
+<body>
+<div id="game"></div>
+<div id="dmg" class="hud"></div>
+<div id="crosshair" class="hud"><div id="ch-t"></div><div id="ch-b"></div><div id="ch-l"></div><div id="ch-r"></div><div id="ch-dot"></div></div>
+<div id="hitmarker" class="hud"></div>
+<canvas id="minimap" class="hud" width="190" height="142"></canvas>
+<div id="scoreboard" class="hud">
+  <div class="team" id="score-e">0</div>
+  <div id="score-mid"><div id="timer">1:40</div><div id="round-label">ROUND 1 OF 12</div></div>
+  <div class="team" id="score-a">0</div>
+</div>
+<div id="killfeed" class="hud"></div>
+<div id="radio" class="hud"></div>
+<div id="vitals" class="hud">
+  <div class="stat"><div class="lbl">HEALTH</div><div class="num" id="health-num">100</div><div class="bar"><i id="health-bar" style="width:100%"></i></div></div>
+  <div class="stat"><div class="lbl">ARMOUR + HELM</div><div class="num" id="armour-num">0</div><div class="bar"><i id="armour-bar" style="width:0%"></i></div></div>
+  <div class="stat"><div class="lbl">FUNDS</div><div class="num" id="funds-num">$800</div></div>
+</div>
+<div id="weapon" class="hud"><div id="weapon-name">WREN-9</div><div><span id="ammo-mag">12</span> <span id="ammo-res">/ 36</span></div></div>
+<div id="banner" class="hud"><div id="banner-title"></div><div id="banner-sub"></div></div>
+<div id="progress" class="hud"><div id="progress-label"></div><div class="track"><div id="progress-bar"></div></div></div>
+<div id="spectate" class="hud"></div>
+<div id="hint" class="hud"></div>
+<div id="buymenu" class="hud">
+  <h2>BUY — FURNACE ROW</h2>
+  <div class="sub">Funds: <b id="buy-funds">$800</b> · Press a number or click · B closes</div>
+  <div id="buy-items"></div>
+</div>
+<div id="start" class="overlay">
+  <h1>SLAG<em>WORKS</em></h1>
+  <p>5v5 round-based tactical FPS. EMBER attacks, ASH defends. Plant the charge at Furnace Hall or Slag Yard — or clear the yard. First to 7 rounds takes the match.</p>
+  <button>CLICK TO PLAY</button>
+  <div class="keys"><b>WASD</b> move · <b>Mouse</b> aim · <b>Click</b> fire · <b>R</b> reload · <b>B</b> buy · <b>E</b> plant / defuse · <b>Ctrl</b> crouch · <b>Space</b> jump · <b>1–4</b> weapons · <b>5–6</b> grenades</div>
+</div>
+<div id="matchend" class="overlay">
+  <h1 id="me-title">EMBER WINS</h1>
+  <p id="me-score"></p>
+  <button id="again">PLAY AGAIN</button>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
