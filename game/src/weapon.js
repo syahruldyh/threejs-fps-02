@@ -9,15 +9,20 @@ import { clamp, segBox, segBoxes } from './util.js';
 import { eyePos, hurt, addRecoil } from './player.js';
 
 export const WEAPONS = {
-  wren:   { name: 'Wren-9',   slot: 2, price: 0,    dmg: 28, auto: false, interval: 0.28, mag: 12, reserve: 36, reload: 1.3, spread: 0.011, bloom: 0.010, kick: 0.011, falloff: 26 },
-  shiv:   { name: 'Shiv SMG', slot: 3, price: 1200, dmg: 24, auto: true,  interval: 0.08, mag: 32, reserve: 96, reload: 1.9, spread: 0.017, bloom: 0.011, kick: 0.009, falloff: 18 },
-  lancer: { name: 'Lancer AR', slot: 1, price: 2500, dmg: 32, auto: true,  interval: 0.10, mag: 30, reserve: 90, reload: 2.2, spread: 0.010, bloom: 0.012, kick: 0.013, falloff: 30 },
-  napier: { name: 'Napier DMR', slot: 4, price: 3500, dmg: 78, auto: false, interval: 0.75, mag: 10, reserve: 30, reload: 2.6, spread: 0.004, bloom: 0.020, kick: 0.035, falloff: 60, zoom: true },
+  wren:   { name: 'Wren-9',   slot: 2, price: 0,    dmg: 28, auto: false, interval: 0.28, mag: 12, reserve: 36, reload: 1.3, spread: 0.011, bloom: 0.010, kick: 0.011, falloff: 26, desc: 'reliable sidearm' },
+  shiv:   { name: 'Shiv SMG', slot: 3, price: 1200, dmg: 24, auto: true,  interval: 0.08, mag: 32, reserve: 96, reload: 1.9, spread: 0.017, bloom: 0.011, kick: 0.009, falloff: 18, desc: 'close-quarters shredder' },
+  lancer: { name: 'Lancer AR', slot: 1, price: 2500, dmg: 32, auto: true,  interval: 0.10, mag: 30, reserve: 90, reload: 2.2, spread: 0.010, bloom: 0.012, kick: 0.013, falloff: 30, desc: 'the all-rounder' },
+  boomstick: { name: 'Boomstick-8', slot: 5, price: 1150, dmg: 14, pellets: 6, auto: false, interval: 0.85, mag: 8, reserve: 32, reload: 2.4, spread: 0.030, bloom: 0.022, kick: 0.045, falloff: 14, desc: 'room clearer, six pellets' },
+  napier: { name: 'Napier DMR', slot: 4, price: 3500, dmg: 78, auto: false, interval: 0.75, mag: 10, reserve: 30, reload: 2.6, spread: 0.004, bloom: 0.020, kick: 0.035, falloff: 60, zoom: true, desc: 'long-lane marksman' },
+  mule:   { name: 'Mule-60 LMG', slot: 6, price: 3600, dmg: 26, auto: true, interval: 0.09, mag: 60, reserve: 120, reload: 3.4, spread: 0.016, bloom: 0.008, kick: 0.012, falloff: 26, desc: 'a hundred rounds of suppression' },
 };
 
 export const GRENADES = {
-  charge: { name: 'Charge HE', price: 300, radius: 6, dmg: 90, fuse: 1.8 },
-  smoke:  { name: 'Smoke', price: 250, radius: 4.5, fuse: 1.6, smoke: true },
+  charge: { name: 'Charge HE', price: 300, radius: 6, dmg: 90, fuse: 1.8, desc: 'burst damage through a doorway' },
+  smoke:  { name: 'Smoke', price: 250, radius: 4.5, fuse: 1.6, smoke: true, desc: 'a wall that breaks sight lines' },
+  flash:  { name: 'Sunset Flash', price: 200, radius: 25, fuse: 1.4, flash: true, desc: 'blinds anyone looking at it' },
+  molotov: { name: 'Ember Jar', price: 400, radius: 3, fuse: 1.2, molotov: true, desc: 'a pool of fire that denies ground' },
+  decoy:  { name: 'Decoy Whistle', price: 150, radius: 30, fuse: 1.0, decoy: true, desc: 'fake gunfire that pulls rotations' },
 };
 
 // One fighter's loadout: owned weapons, current, ammo, bloom, grenades.
@@ -27,9 +32,9 @@ export function createLoadout() {
     current: 'wren',
     mag: { wren: 12 },
     reserve: { wren: 36 },
-    grenades: { charge: 0, smoke: 0 },
+    grenades: { charge: 0, smoke: 0, flash: 0, molotov: 0, decoy: 0 },
     reloading: 0, lastShot: -9, bloom: 0, scoped: false,
-    throwAnim: 0,
+    throwAnim: 0, armourBought: false, helmetBought: false,
   };
 }
 
@@ -62,10 +67,13 @@ export function spreadOf(load, def, speed, crouch, airborne, scoped) {
 const _dir = new THREE.Vector3();
 const _eye = new THREE.Vector3();
 const _end = new THREE.Vector3();
+const _hp = new THREE.Vector3();
 const _hit = { t: -1, box: null };
 
 // Fire one hitscan shot. ctx: {world, fighters, self, rng, time, onHit,
 // onKill, tracer, sound}. Returns 'shot' | 'dry' | 'reload' | 'wait'.
+// A weapon with `pellets` (the Boomstick) fires that many rays per shot,
+// each with its own spread jitter — a real spread, not a slug.
 export function fire(load, fighter, ctx) {
   const def = WEAPONS[load.current];
   if (!def) return 'wait';
@@ -76,41 +84,45 @@ export function fire(load, fighter, ctx) {
   load.mag[load.current]--;
   load.bloom = clamp(load.bloom + def.bloom, 0, 0.09);
 
-  // Direction: view + random cone + recoil is applied to the view itself.
   const speed = Math.hypot(fighter.vel.x, fighter.vel.z);
   const spread = spreadOf(load, def, speed, fighter.crouch, !fighter.onGround, load.scoped);
-  const a = ctx.rng() * Math.PI * 2, r = spread * Math.sqrt(ctx.rng());
-  const yaw = fighter.yaw + Math.cos(a) * r;
-  const pitch = fighter.pitch + Math.sin(a) * r;
-  _dir.set(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
   eyePos(fighter, _eye);
-  _end.copy(_eye).addScaledVector(_dir, 90);
-
-  // Nearest hit: world first, then every other fighter's head/torso.
-  const wallT = ctx.world.ray(_eye, _end);
-  let bestT = wallT >= 0 ? wallT : 2, bestF = null, bestHead = false;
-  for (const other of ctx.fighters) {
-    if (other === fighter || !other.alive) continue;
-    const th = segBox(_eye, _end, other.head);
-    const tb = segBox(_eye, _end, other.torso);
-    const t = th >= 0 ? th : tb;
-    if (t >= 0 && t < bestT) { bestT = t; bestF = other; bestHead = th >= 0 && th <= tb; }
-  }
-  const hitPoint = _eye.clone().addScaledVector(_dir, bestT * 90);
-  ctx.tracer(_eye, hitPoint);
   ctx.onShot?.(fighter, load.current);
-  addRecoil(fighter, def.kick, (ctx.rng() - 0.5) * def.kick * 0.7);
-  if (bestF) {
-    const dist = bestT * 90;
-    let dmg = dist > def.falloff ? def.dmg * 0.65 : def.dmg;
-    // Bot duels last longer than human ones, so the human matters more
-    // than the nine bots fighting among themselves.
-    if (fighter.bot && bestF.bot) dmg *= 0.7;
-    const killed = hurt(bestF, dmg, bestHead);
-    ctx.onHit(fighter, bestF, bestHead, killed, hitPoint);
-  } else {
-    ctx.onWall(hitPoint);
+  const pellets = def.pellets || 1;
+  for (let p = 0; p < pellets; p++) {
+    // Direction: view + random cone + recoil is applied to the view itself.
+    const a = ctx.rng() * Math.PI * 2, r = spread * Math.sqrt(ctx.rng());
+    const yaw = fighter.yaw + Math.cos(a) * r;
+    const pitch = fighter.pitch + Math.sin(a) * r;
+    _dir.set(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+    _end.copy(_eye).addScaledVector(_dir, 90);
+
+    // Nearest hit: world first, then every other fighter's head/torso.
+    const wallT = ctx.world.ray(_eye, _end);
+    let bestT = wallT >= 0 ? wallT : 2, bestF = null, bestHead = false;
+    for (const other of ctx.fighters) {
+      if (other === fighter || !other.alive) continue;
+      const th = segBox(_eye, _end, other.head);
+      const tb = segBox(_eye, _end, other.torso);
+      const t = th >= 0 ? th : tb;
+      if (t >= 0 && t < bestT) { bestT = t; bestF = other; bestHead = th >= 0 && th <= tb; }
+    }
+    _hp.copy(_eye).addScaledVector(_dir, bestT * 90);
+    ctx.tracer(_eye, _hp);
+    if (bestF) {
+      const dist = bestT * 90;
+      let dmg = dist > def.falloff ? def.dmg * 0.65 : def.dmg;
+      // Bot duels last longer than human ones, so the human matters more
+      // than the nine bots fighting among themselves.
+      if (fighter.bot && bestF.bot) dmg *= 0.7;
+      const killed = hurt(bestF, dmg, bestHead);
+      ctx.onHit(fighter, bestF, bestHead, killed, _hp, dmg);
+    } else {
+      ctx.onWall(_hp);
+    }
   }
+  // Recoil lands on the view after the shot, so it shapes the next shot.
+  addRecoil(fighter, def.kick, (ctx.rng() - 0.5) * def.kick * 0.7);
   return 'shot';
 }
 
@@ -170,6 +182,9 @@ export function updateProjectiles(list, ctx, dt) {
     if (g.fuse <= 0) {
       g.alive = false;
       if (g.def.smoke) ctx.smokeAt(g.pos.clone(), g.def.radius);
+      else if (g.def.flash) ctx.flashAt?.(g.pos.clone(), g.def.radius);
+      else if (g.def.molotov) ctx.molotovAt?.(g.pos.clone(), g.def.radius);
+      else if (g.def.decoy) ctx.decoyAt?.(g.pos.clone(), g.def.radius);
       else ctx.explodeAt(g.pos.clone(), g.def.radius, g.def.dmg, g.owner);
       list.splice(i, 1);
     }

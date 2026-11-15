@@ -41,21 +41,45 @@ function resetPositions(game) {
   const attackers = game.fighters.filter((f) => f.team === 'ember');
   r.bomb.carrier = attackers[Math.floor(game.rng() * attackers.length)];
   r.bomb.state = 'carried'; r.bomb.site = null; r.bomb.pos = null;
-  // Assign routes: 2 A, 2 B, 1 mid per side; defenders hold their sites.
+  // The round's plan: EMBER picks one site and three attackers execute
+  // it together (the other two pressure the other lane). The lead
+  // attacker calls it on radio, the way a squad does.
+  const executeSite = game.rng() < 0.5 ? 'A' : 'B';
   const atk = game.fighters.filter((f) => f.team === 'ember' && f.bot);
   const def = game.fighters.filter((f) => f.team === 'ash' && f.bot);
-  const atkRoutes = ['atkA', 'atkB', 'atkMid', 'atkA', 'atkB'];
+  const atkRoutes = executeSite === 'A'
+    ? ['atkA', 'atkMid', 'atkA', 'atkB', 'atkMidB']
+    : ['atkB', 'atkMidB', 'atkB', 'atkA', 'atkMid'];
   const defRoutes = ['defA', 'defB', 'defMid', 'defA', 'defB'];
   atk.forEach((f, i) => {
     const route = game.world.routes[atkRoutes[i % atkRoutes.length]];
     f.bot.route = [...route]; f.bot.routeIdx = 0; f.bot.hold = null;
+    f.bot.executeSite = executeSite; f.bot.smokeThrown = false;
+    botBuy(f); // economy-aware buy: rifle, armour, then utility
   });
   def.forEach((f, i) => {
     const route = game.world.routes[defRoutes[i % defRoutes.length]];
     f.bot.route = [...route]; f.bot.routeIdx = 0; f.bot.hold = null;
+    f.bot.executeSite = null; f.bot.smokeThrown = false;
+    botBuy(f);
   });
+  if (atk.length) game.radio(atk[0].bot, `go go, executing ${executeSite}`);
   // The player walks their own route (none): they choose.
   r.playerChannel = null;
+}
+
+// A bot spends its money the way a player would: rifle first, then
+// armour and helmet, then utility. Money is the round economy, not a
+// decoration.
+function botBuy(f) {
+  const load = f.load;
+  if (!load) return;
+  if (f.money >= 2500 && !load.owned.lancer) f.money = buyWeapon(load, 'lancer', f.money);
+  else if (f.money >= 1200 && !load.owned.shiv) f.money = buyWeapon(load, 'shiv', f.money);
+  if (f.money >= 650 && f.armour < 50) { f.money -= 650; f.armour = 100; load.armourBought = true; }
+  if (f.money >= 350 && !f.helmet) { f.money -= 350; f.helmet = true; load.helmetBought = true; }
+  if (f.money >= 250 && (load.grenades.smoke || 0) < 1) f.money = buyGrenade(load, 'smoke', f.money);
+  if (f.money >= 200 && (load.grenades.flash || 0) < 1) f.money = buyGrenade(load, 'flash', f.money);
 }
 
 export function startMatch(game) {
@@ -225,10 +249,10 @@ export function onDefused(game, fighter) {
 }
 
 // Kill economy + feed.
-export function onKill(game, killer, victim) {
+export function onKill(game, killer, victim, head) {
   if (killer && killer !== victim) {
     killer.money = (killer.money ?? 800) + 300;
     if (killer === game.player) game.audio.kill();
   }
-  game.hud.killfeed(killer ? killer.name : '—', victim.name, killer && killer.load ? (WEAPONS[killer.load.current] || {}).name : '—');
+  game.hud.killfeed(killer ? killer.name : '—', victim.name, killer && killer.load ? (WEAPONS[killer.load.current] || {}).name : '—', !!head);
 }

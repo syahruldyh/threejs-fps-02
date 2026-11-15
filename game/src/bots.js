@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { createFighter, moveFighter, eyePos, updateHitboxes } from './player.js';
-import { createLoadout, fire, updateReload, WEAPONS } from './weapon.js';
+import { createLoadout, fire, updateReload, throwGrenade, WEAPONS } from './weapon.js';
 import { clamp, wrapAngle } from './util.js';
 
 const BOT_NAMES_EMBER = ['Ferro', 'Klink', 'Ashford', 'Mara'];
@@ -28,26 +28,47 @@ export function createBot(game, team, name, spawn, role) {
   bot.load.owned.shiv = true;
   bot.load.mag.shiv = WEAPONS.shiv.mag; bot.load.reserve.shiv = WEAPONS.shiv.reserve;
   bot.load.current = 'shiv';
-  bot.mesh = buildBotMesh(game.scene, team);
+  bot.mesh = buildBotMesh(game.scene, team, name);
+  bot.executeSite = null; bot.smokeThrown = false; bot.blindT = 0;
   return bot;
 }
 
-function buildBotMesh(scene, team) {
+function nameTagTexture(name) {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 32;
+  const g = c.getContext('2d');
+  g.font = 'bold 20px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = 'rgba(10,10,16,0.55)';
+  const w = g.measureText(name).width + 16;
+  g.fillRect(64 - w / 2, 4, w, 24);
+  g.fillStyle = '#f2ede4'; g.fillText(name, 64, 17);
+  const t = new THREE.CanvasTexture(c);
+  return t;
+}
+
+function buildBotMesh(scene, team, name) {
   const g = new THREE.Group();
   const body = new THREE.MeshLambertMaterial({ color: team === 'ember' ? 0x8a5a2e : 0x2e4a5a });
   const accent = new THREE.MeshLambertMaterial({ color: team === 'ember' ? 0xff8a3c : 0x59b7ff });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x23262b });
   const skin = new THREE.MeshLambertMaterial({ color: 0xc9a37e });
   const add = (w, h, d, x, y, z, m) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
     mesh.position.set(x, y, z); mesh.castShadow = true; g.add(mesh); return mesh;
   };
   add(0.62, 0.85, 0.34, 0, 1.05, 0, body);          // torso
-  add(0.64, 0.1, 0.36, 0, 1.5, 0, accent);          // shoulder stripe
+  add(0.64, 0.12, 0.36, 0, 1.5, 0, accent);         // chest plate stripe
   add(0.34, 0.34, 0.34, 0, 1.68, 0, skin);          // head
   add(0.36, 0.12, 0.36, 0, 1.88, 0, accent);        // helm
+  add(0.3, 0.1, 0.06, 0, 1.7, -0.18, dark);         // visor
   add(0.24, 0.75, 0.24, -0.18, 0.38, 0, body);      // legs
   add(0.24, 0.75, 0.24, 0.18, 0.38, 0, body);
-  add(0.09, 0.09, 0.7, 0.3, 1.25, -0.35, new THREE.MeshLambertMaterial({ color: 0x23262b })); // gun
+  add(0.12, 0.12, 0.5, -0.3, 1.2, -0.15, body);     // arms, forward to the gun
+  add(0.12, 0.12, 0.5, 0.3, 1.2, -0.15, body);
+  add(0.09, 0.09, 0.7, 0.3, 1.25, -0.35, dark);     // gun in hand
+  // Name tag above the head, the way a squad reads in a real match.
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTagTexture(name), transparent: true, depthWrite: false }));
+  tag.position.set(0, 2.15, 0); tag.scale.set(1.5, 0.38, 1);
+  g.add(tag);
   scene.add(g);
   return g;
 }
@@ -70,6 +91,26 @@ export function updateBot(game, bot, dt) {
   if (!f.alive) {
     if (bot.mesh) { bot.mesh.rotation.x = Math.PI / 2; bot.mesh.position.y = 0.25; }
     return;
+  }
+  // Flashbang blindness: the bot cannot see or shoot until it clears.
+  if (bot.blindT > 0) {
+    bot.blindT -= dt;
+    bot.target = null;
+    moveFighter(game.world, f, 0, 0, false, dt);
+    syncMesh(bot);
+    return;
+  }
+  // Fire pools: step out of the flames instead of standing in them.
+  for (const fz of game.effects.fireZones) {
+    if (fz.ttl <= 0) continue;
+    const dx = f.pos.x - fz.pos.x, dz = f.pos.z - fz.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < fz.r + 0.5) {
+      const ux = d > 0.01 ? dx / d : 1, uz = d > 0.01 ? dz / d : 0;
+      moveFighter(game.world, f, ux, uz, false, dt);
+      syncMesh(bot);
+      return;
+    }
   }
   // --- perception, staggered so nine bots never scan on the same step ---
   // During freeze nobody fights: bots walk to their lanes, guns down.
@@ -150,6 +191,20 @@ export function updateBot(game, bot, dt) {
         }
       } else { wishX = dx / d; wishZ = dz / d; f.yaw += wrapAngle(Math.atan2(-dx, -dz) - f.yaw) * Math.min(1, dt * 6); }
     }
+    // Coordinated execute: the attackers smoke the site entrance before
+    // they push in, so the entry is covered instead of a naked walk.
+    if (bot.executeSite && !bot.smokeThrown && (bot.load.grenades.smoke || 0) > 0 && game.projCtx) {
+      const s = game.world.sites[bot.executeSite];
+      const ds = Math.hypot(s.center.x - f.pos.x, s.center.z - f.pos.z);
+      if (ds < 14 && !frozen) {
+        const faced = Math.atan2(-(s.center.x - f.pos.x), -(s.center.z - f.pos.z));
+        f.yaw = faced;
+        if (throwGrenade(bot.load, 'smoke', f, game.projCtx)) {
+          bot.smokeThrown = true;
+          game.radio(bot, 'smoke on the gate');
+        }
+      }
+    }
   }
   // Separation: never stack on a teammate.
   for (const other of game.fighters) {
@@ -175,6 +230,16 @@ function syncMesh(bot) {
   m.position.set(f.pos.x, f.pos.y, f.pos.z);
   m.rotation.y = f.yaw;
   m.rotation.x = 0;
+}
+
+// The nearest named callout for a position: radio lines name places,
+// the way a real squad talks ("two at the kiln crates, smoke on the gate").
+function calloutName(pos) {
+  if (pos.z < -10) return pos.x < 0 ? 'Furnace Hall' : 'Slag Yard';
+  if (pos.x < -18) return 'A Long';
+  if (pos.x > 18) return 'B Tunnel';
+  if (pos.z < 8) return 'Pump Link';
+  return 'spawn';
 }
 
 function scan(game, bot) {
@@ -204,7 +269,7 @@ function scan(game, bot) {
     if (isNew) {
       bot.reactAt = game.time + REACT_MIN + game.rng() * (REACT_MAX - REACT_MIN);
       bot.burst = 0; bot.burstPause = 0;
-      if (game.rng() < 0.4) game.radio(bot, 'contact');
+      if (game.rng() < 0.4) game.radio(bot, `contact, ${calloutName(best.pos)}`);
     }
   } else if (bot.target && game.time - bot.lastSeenT > 3) {
     bot.target = null;

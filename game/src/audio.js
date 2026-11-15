@@ -48,6 +48,8 @@ export function createAudio() {
     reload() { ac.tone(700, 0.04, 0.25, 'square'); setTimeout(() => ac.tone(500, 0.05, 0.25, 'square'), 160); },
     step() { ac.noise(0.05, 500, 0.12); },
     hit() { ac.tone(2400, 0.04, 0.3, 'sine'); },
+    headshot() { ac.tone(3200, 0.05, 0.35, 'sine'); setTimeout(() => ac.tone(4000, 0.06, 0.3, 'sine'), 50); },
+    flashSnd() { ac.tone(2800, 0.5, 0.25, 'sine', 1400); ac.noise(0.3, 4000, 0.2, 'highpass'); },
     kill() { ac.tone(1800, 0.06, 0.3, 'sine'); setTimeout(() => ac.tone(2400, 0.08, 0.3, 'sine'), 70); },
     hurt() { ac.noise(0.1, 400, 0.4); },
     plant() { ac.tone(880, 0.09, 0.35, 'square'); },

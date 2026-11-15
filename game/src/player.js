@@ -17,7 +17,7 @@ export function createFighter(world, x, z, yaw) {
     vel: new THREE.Vector3(),
     yaw, pitch: 0,
     crouch: false, onGround: true,
-    hp: 100, armour: 0, alive: true,
+    hp: 100, armour: 0, helmet: false, alive: true,
     eye: EYE_STAND,
     // Hitboxes, recomputed from pos each frame (head + torso).
     head: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
@@ -87,10 +87,11 @@ export function eyePos(f, out) {
   return out;
 }
 
-// Damage: armour absorbs half while it lasts. Returns true when killed.
+// Damage: armour absorbs half while it lasts; a helmet softens headshots
+// (2x -> 1.5x). Returns true when killed.
 export function hurt(f, amount, isHead) {
   if (!f.alive) return false;
-  let dmg = isHead ? amount * 2 : amount;
+  let dmg = isHead ? amount * (f.helmet ? 1.5 : 2) : amount;
   if (f.armour > 0) {
     const absorbed = Math.min(f.armour, dmg * 0.5);
     f.armour -= absorbed;
